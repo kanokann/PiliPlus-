@@ -5,6 +5,7 @@ import 'package:PiliPlus/common/widgets/pair.dart';
 import 'package:PiliPlus/http/api.dart';
 import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/error_msg.dart';
+import 'package:PiliPlus/http/dynamics_up_list.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/reply.dart';
@@ -27,6 +28,7 @@ import 'package:PiliPlus/models_new/dynamic/dyn_topic_top/top_details.dart';
 import 'package:PiliPlus/models_new/dynamic/dyn_topic_top/topic_item.dart';
 import 'package:PiliPlus/models_new/followee_votes/vote.dart';
 import 'package:PiliPlus/utils/accounts.dart';
+import 'package:PiliPlus/utils/accounts/account.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:PiliPlus/utils/wbi_sign.dart';
 import 'package:dio/dio.dart';
@@ -38,13 +40,19 @@ abstract final class DynamicsHttp {
     String? offset,
     Set<int>? tempBannedList,
     DynamicsTabType type = .all,
+    Account? account,
+    bool forUpdateTracking = false,
   }) async {
     Map<String, dynamic> data = {
       if (type == .up) 'host_mid': hostMid else 'type': type.name,
       'offset': ?offset,
       'features': Constants.dynFeatures,
     };
-    final res = await Request().get(Api.followDynamic, queryParameters: data);
+    final res = await Request().get(
+      Api.followDynamic,
+      queryParameters: data,
+      options: account == null ? null : Options(extra: {'account': account}),
+    );
     final code = res.data['code'];
     if (code == 0) {
       try {
@@ -52,6 +60,7 @@ abstract final class DynamicsHttp {
           res.data['data'],
           type: type,
           tempBannedList: tempBannedList,
+          forUpdateTracking: forUpdateTracking,
         );
         if (data.loadNext == true) {
           return await followDynamic(
@@ -59,6 +68,8 @@ abstract final class DynamicsHttp {
             offset: data.offset,
             hostMid: hostMid,
             tempBannedList: tempBannedList,
+            account: account,
+            forUpdateTracking: forUpdateTracking,
           );
         }
         return Success(data);
@@ -70,22 +81,35 @@ abstract final class DynamicsHttp {
     }
   }
 
-  static Future<LoadingState<FollowUpModel>> followUp() async {
+  static Future<LoadingState<FollowUpModel>> followUp({
+    bool loadAll = false,
+    Account? account,
+  }) async {
     final res = await Request().get(
       Api.followUp,
       queryParameters: {
         'up_list_more': 1,
         'web_location': 333.1365,
       },
+      options: Options(extra: {'account': account ?? Accounts.main}),
     );
     if (res.data['code'] == 0) {
-      return Success(FollowUpModel.fromJson(res.data['data']));
+      final data = FollowUpModel.fromJson(res.data['data']);
+      return loadAll
+          ? loadAllDynamicUps(
+              data,
+              (offset) => dynUpList(offset, account: account),
+            )
+          : Success(data);
     } else {
       return Error(res.data['message']);
     }
   }
 
-  static Future<LoadingState<FollowUpModel>> dynUpList(String? offset) async {
+  static Future<LoadingState<FollowUpModel>> dynUpList(
+    String? offset, {
+    Account? account,
+  }) async {
     final res = await Request().get(
       Api.dynUplist,
       queryParameters: {
@@ -93,6 +117,7 @@ abstract final class DynamicsHttp {
         'platform': 'web',
         'web_location': 333.1365,
       },
+      options: Options(extra: {'account': account ?? Accounts.main}),
     );
     if (res.data['code'] == 0) {
       return Success(FollowUpModel.fromUpList(res.data['data']));
@@ -106,6 +131,7 @@ abstract final class DynamicsHttp {
     int? pn,
     int ps = 20,
     String orderType = '', // ''=>最近关注，'attention'=>最常访问
+    Account? account,
   }) async {
     final res = await Request().get(
       Api.followings,
@@ -116,6 +142,7 @@ abstract final class DynamicsHttp {
         'order': 'desc',
         'order_type': orderType,
       },
+      options: Options(extra: {'account': account ?? Accounts.main}),
     );
     if (res.data['code'] == 0) {
       return Success(FollowUpModel.fromFollowList(res.data['data']));

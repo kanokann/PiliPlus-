@@ -18,6 +18,7 @@ class DynamicsDataModel {
   String? offset;
   int? total;
   bool? loadNext;
+  int updateBaseline = 0;
 
   static String _getMatchText(DynamicItemModel item) {
     final moduleDynamic = item.modules.moduleDynamic;
@@ -51,8 +52,12 @@ class DynamicsDataModel {
     Map<String, dynamic> json, {
     DynamicsTabType type = DynamicsTabType.all,
     Set<int>? tempBannedList,
+    bool forUpdateTracking = false,
   }) {
-    hasMore = json['has_more'];
+    hasMore = forUpdateTracking
+        ? json['has_more'] == true || json['has_more'] == 1
+        : json['has_more'];
+    updateBaseline = safeToInt(json['update_baseline']) ?? 0;
 
     List? list = json['items'] as List?;
     if (list != null && list.isNotEmpty) {
@@ -61,6 +66,10 @@ class DynamicsDataModel {
           type != DynamicsTabType.up && tempBannedList?.isNotEmpty == true;
       for (final e in list) {
         DynamicItemModel item = DynamicItemModel.fromJson(e);
+        if (forUpdateTracking) {
+          items!.add(item);
+          continue;
+        }
         if (antiGoodsDyn &&
             (item.orig?.modules.moduleDynamic?.additional?.type ==
                     'ADDITIONAL_TYPE_GOODS' ||
@@ -461,6 +470,7 @@ class ModuleAuthorModel extends Avatar {
   String? type;
   Decorate? decorate;
   bool? isTop;
+  bool? following;
   String? badgeText;
 
   ModuleAuthorModel.fromJson(Map<String, dynamic> json) : super.fromJson(json) {
@@ -481,7 +491,16 @@ class ModuleAuthorModel extends Avatar {
     } else {
       pendant = null;
     }
-    isTop = json['is_top'];
+    isTop = switch (json['is_top']) {
+      true || 1 => true,
+      false || 0 => false,
+      _ => null,
+    };
+    following = switch (json['following']) {
+      true || 1 => true,
+      false || 0 => false,
+      _ => null,
+    };
     badgeText = nonNullOrEmptyString(json['icon_badge']?['text']);
   }
 }
