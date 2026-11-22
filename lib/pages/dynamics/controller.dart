@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:PiliPlus/grpc/dyn.dart';
 import 'package:PiliPlus/http/dynamics.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/dynamic/dynamics_type.dart';
+import 'package:PiliPlus/models/dynamics/result.dart';
 import 'package:PiliPlus/models/dynamics/up.dart';
 import 'package:PiliPlus/pages/common/common_data_controller.dart';
 import 'package:PiliPlus/pages/dynamics_tab/controller.dart';
@@ -26,9 +28,51 @@ class DynamicsController
   late int _page = 1;
   late bool _isEnd = false;
   Set<UpItem>? _cacheUpList;
+  final _publicationTimes = <int, int>{};
+  UpItem? _lastReadUp;
+  var _markingRead = <int>{};
+  Set<int>? _readDuringRefresh;
+  bool _firstPage = true;
+  Future<void>? _feedRefresh;
+  late int _requestMid;
+  late Future<void> _request;
   late int hostMid = -1, currentMid = -1;
   late bool showLiveUp = Pref.expandDynLivePanel;
   late final _showAllUp = Pref.dynamicsShowAllFollowedUp;
+  bool get _useAppUnread =>
+      _showAllUp && !Accounts.main.accessKey.isNullOrEmpty;
+
+  bool get _keepPanel =>
+      _showAllUp &&
+      currentMid != -1 &&
+      tabController.index == DynamicsTabType.up.index &&
+      loadingState.value.isSuccess;
+
+  void recordPublications(
+    List<DynamicItemModel>? items, {
+    required bool firstPage,
+  }) {
+    if (isClosed || !_showAllUp || items == null) return;
+    var changed = false;
+    for (final item in items) {
+      final author = item.modules.moduleAuthor;
+      final mid = author?.mid;
+      final time = author?.pubTs ?? 0;
+      if (mid == null || time <= (_publicationTimes[mid] ?? 0)) continue;
+      _publicationTimes[mid] = time;
+      changed = true;
+    }
+    if (changed && firstPage && !isLoading && !_keepPanel) {
+      _sortVisiblePanel();
+    }
+  }
+
+  void _sortVisiblePanel() {
+    if (loadingState.value.dataOrNull case final panel?) {
+      panel.sortUnread(_publicationTimes, lastReadMid: _lastReadUp?.mid);
+      loadingState.refresh();
+    }
+  }
 
   final upPanelPosition = Pref.upPanelPosition;
 
@@ -60,7 +104,19 @@ class DynamicsController
     tabController.index = mid == -1 ? 0 : 4;
   }
 
-  void onSelectUp(int mid) {
+  void onSelectUp(UpItem item) {
+    final mid = item.mid;
+    if (_showAllUp && item.hasUpdate == true) _lastReadUp = item;
+    if (item.hasUpdate == true && _useAppUnread) {
+      final marking = _markingRead;
+      _readDuringRefresh?.add(mid);
+      if (marking.add(mid)) {
+        unawaited(
+          DynGrpc.markUpRead(mid).whenComplete(() => marking.remove(mid)),
+        );
+      }
+    }
+    item.hasUpdate = false;
     if (currentMid == mid) {
       _jumpToTab(mid);
       if (mid == -1) {
@@ -81,37 +137,33 @@ class DynamicsController
 
     currentMid = mid;
     _jumpToTab(mid);
+    if (mid == -1 && _showAllUp) singleRefresh();
   }
 
-  Future<void> singleRefresh() {
-    if (_showAllUp) {
-      _page = 1;
-      _cacheUpList = null;
+  Future<void> singleRefresh([Future<void>? feed]) async {
+    if (isClosed || _keepPanel) return;
+    if (isLoading) {
+      if (_firstPage && _requestMid == Accounts.main.mid) return _request;
+      await _request;
+      if (isLoading) return _request;
     }
-    _offset = null;
-    _isEnd = false;
+    if (isClosed || _keepPanel) return;
+    _feedRefresh = feed;
     return super.onRefresh();
   }
 
-  @override
-  Future<void> onRefresh() {
-    final controller = this.controller;
-    if (controller != null) {
-      singleRefresh();
-      return controller.onRefresh();
-    }
-    return singleRefresh();
+  Future<void> refreshTab(DynamicsTabController? tab) {
+    if (_keepPanel) _sortVisiblePanel();
+    final feed = tab?.onRefresh();
+    return Future.wait([?feed, singleRefresh(feed)]);
   }
 
   @override
-  Future<void> showRefresh() {
-    final controller = this.controller;
-    if (controller != null) {
-      singleRefresh();
-      return controller.showRefresh();
-    }
-    return singleRefresh();
-  }
+  Future<void> onRefresh() => refreshTab(controller);
+
+  @override
+  Future<void> showRefresh() =>
+      controller?.refreshKey.currentState?.show() ?? onRefresh();
 
   @override
   void animateToTop() {
@@ -148,12 +200,39 @@ class DynamicsController
   }
 
   @override
-  void onChangeAccount(bool isLogin) => onReload();
+  void onChangeAccount(bool isLogin) {
+    _publicationTimes.clear();
+    _lastReadUp = null;
+    _markingRead = {};
+    currentMid = hostMid = -1;
+    onReload();
+  }
 
   @override
-  Future<LoadingState<FollowUpModel>> customGetData() {
-    if (_offset == null) {
-      return DynamicsHttp.followUp();
+  Future<LoadingState<FollowUpModel>> customGetData() async {
+    if (_firstPage) {
+      final feed = _feedRefresh;
+      _feedRefresh = null;
+      final read = _readDuringRefresh = {..._markingRead};
+      try {
+        final (result, more, _) = await (
+          DynamicsHttp.followUp(),
+          _useAppUnread ? DynGrpc.upListMore() : Future.value(null),
+          feed?.catchError((Object _) {}) ?? Future<void>.value(),
+        ).wait;
+        if (more != null) {
+          result.dataOrNull?.prependUnread(
+            more.dataOrNull?.items ?? const [],
+            read,
+            lastRead: _lastReadUp,
+          );
+        }
+        return result;
+      } catch (e) {
+        return Error(e.toString());
+      } finally {
+        _readDuringRefresh = null;
+      }
     }
     if (_showAllUp) {
       return DynamicsHttp.followings(
@@ -169,46 +248,46 @@ class DynamicsController
 
   @override
   Future<void> queryData([bool isRefresh = true]) {
-    if (!isRefresh && _isEnd) return Future.value();
-    return super.queryData(isRefresh);
+    if (isLoading) return _request;
+    if (!isRefresh && (_isEnd || !loadingState.value.isSuccess)) {
+      return Future.value();
+    }
+    _requestMid = Accounts.main.mid;
+    _firstPage = isRefresh;
+    return _request = super.queryData(isRefresh);
   }
+
+  bool _discardResponse(bool isRefresh) =>
+      isClosed || _requestMid != Accounts.main.mid || isRefresh && _keepPanel;
+
+  @override
+  bool handleError(String? errMsg) => _discardResponse(true);
 
   @override
   bool customHandleResponse(bool isRefresh, Success<FollowUpModel> response) {
+    if (_discardResponse(isRefresh)) return true;
     final res = response.response;
 
     if (_showAllUp) {
-      if (res.upList?.isNotEmpty != true) {
-        _isEnd = true;
-      }
+      _page = isRefresh ? 1 : _page + 1;
+      _isEnd = !isRefresh && res.upList?.isNotEmpty != true;
     } else {
       _offset = res.offset;
-      if (res.hasMore != true || _offset.isNullOrEmpty) {
-        _isEnd = true;
-      }
+      _isEnd = res.hasMore != true || _offset.isNullOrEmpty;
     }
 
     if (isRefresh) {
       if (_showAllUp) {
-        _offset = '';
+        res.sortUnread(_publicationTimes, lastReadMid: _lastReadUp?.mid);
         _cacheUpList = res.upList?.toSet();
       }
       loadingState.value = response;
-    } else {
-      if (_showAllUp) {
-        _page++;
-      }
-
-      if (res.upList case final upList? when upList.isNotEmpty) {
-        if (_showAllUp && _cacheUpList != null) {
-          upList.removeWhere(_cacheUpList!.contains);
-        }
-        loadingState
-          ..value.data.addAllUpList(upList)
-          ..refresh();
-      }
+    } else if (res.upList case final upList? when upList.isNotEmpty) {
+      if (_cacheUpList case final cached?) upList.removeWhere(cached.contains);
+      loadingState
+        ..value.data.addAllUpList(upList)
+        ..refresh();
     }
-
     return true;
   }
 }

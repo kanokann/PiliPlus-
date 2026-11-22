@@ -41,10 +41,7 @@ class _DynamicsTabPageState extends State<DynamicsTabPage>
     super.initState();
   }
 
-  Future<void> onRefresh() {
-    dynamicsController.singleRefresh();
-    return controller.onRefresh();
-  }
+  Future<void> onRefresh() => dynamicsController.refreshTab(controller);
 
   @override
   Widget build(BuildContext context) {

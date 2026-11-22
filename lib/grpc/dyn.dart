@@ -2,6 +2,10 @@ import 'package:PiliPlus/grpc/bilibili/app/dynamic/v1.pb.dart'
     show DynRedReq, TabOffset, DynRedReply;
 import 'package:PiliPlus/grpc/bilibili/app/dynamic/v2.pb.dart'
     show
+        DynAllPersonalReq,
+        DynAllPersonalReply,
+        DynMixUpListViewMoreReq,
+        DynMixUpListViewMoreReply,
         OpusType,
         OpusDetailReq,
         OpusDetailResp,
@@ -40,6 +44,19 @@ abstract final class DynGrpc {
     );
     return res.dataOrNull?.dynRedItem.count.toInt();
   }
+
+  static Future<LoadingState<DynMixUpListViewMoreReply>> upListMore() =>
+      GrpcReq.request(
+        GrpcUrl.dynMixUpListViewMore,
+        DynMixUpListViewMoreReq(sortType: 1),
+        DynMixUpListViewMoreReply.fromBuffer,
+      );
+
+  static Future<void> markUpRead(int mid) => GrpcReq.request(
+    GrpcUrl.dynAllPersonal,
+    DynAllPersonalReq(hostUid: Int64(mid), page: 1, isPreload: 0),
+    DynAllPersonalReply.fromBuffer,
+  );
 
   static Future<LoadingState<OpusDetailResp>> opusDetail({
     OpusType? opusType,

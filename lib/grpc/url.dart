@@ -8,6 +8,8 @@ abstract final class GrpcUrl {
   static const dynV2 = '/bilibili.app.dynamic.v2.Dynamic';
   static const opusV2 = '/bilibili.app.dynamic.v2.Opus';
   static const dynRed = '$dynV1/DynRed';
+  static const dynMixUpListViewMore = '$dynV2/DynMixUpListViewMore';
+  static const dynAllPersonal = '$dynV2/DynAllPersonal';
   static const opusSpaceFlow = '$opusV2/OpusSpaceFlow';
   static const opusDetail = '$opusV2/OpusDetail';
   // static const dynSpace = '$dynV2/DynSpace';
