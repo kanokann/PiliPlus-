@@ -1,11 +1,49 @@
+import 'package:PiliPlus/grpc/bilibili/app/dynamic/v2.pb.dart'
+    show MixUpListItem;
 import 'package:PiliPlus/models_new/follow/list.dart';
 import 'package:PiliPlus/utils/parse_int.dart';
+import 'package:collection/collection.dart' show mergeSort;
 
 class FollowUpModel {
   LiveUsers? liveUsers;
   List<UpItem>? upList;
   bool? hasMore;
   String? offset;
+
+  void sortUnread(Map<int, int> times, {int? lastReadMid}) {
+    int rank(UpItem up) {
+      if (up.hasUpdate == true) return times[up.mid] ?? 0;
+      return up.mid == lastReadMid ? -1 : -2;
+    }
+
+    final list = upList;
+    if (list == null) return;
+    mergeSort(list, compare: (a, b) => rank(b).compareTo(rank(a)));
+  }
+
+  void prependUnread(
+    Iterable<MixUpListItem> more,
+    Set<int> read, {
+    UpItem? lastRead,
+  }) {
+    final ups = <UpItem>{};
+    void addUp(UpItem up) {
+      if (ups.add(up) && read.contains(up.mid)) up.hasUpdate = false;
+    }
+
+    UpItem? confirmedRead;
+    for (final up in more) {
+      final mid = up.uid.toInt();
+      if (up.reddotState == 1) {
+        addUp(UpItem(mid: mid, uname: up.name, face: up.face, hasUpdate: true));
+      } else if (mid == lastRead?.mid) {
+        confirmedRead = lastRead;
+      }
+    }
+    upList?.forEach(addUp);
+    if (confirmedRead != null) addUp(confirmedRead);
+    upList = ups.toList();
+  }
 
   void addAllUpList(List<UpItem> newList) {
     if (upList != null) {
